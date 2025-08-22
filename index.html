@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#2196F3"/>
+    <link rel="manifest" href="manifest.json"/>
+    <link rel="stylesheet" href="style.css"/>
+    <title>Run Coach</title>
+</head>
+<body>
+    <header>
+        <h1>Run Coach</h1>
+    </header>
+    <main id="main-content">
+        <!-- Home / Run start page -->
+        <section id="home-page" class="page active">
+            <h2>Today's Training</h2>
+            <div id="today-plan"></div>
+            <button id="start-run-btn" class="primary">Start Run</button>
+            <!-- Start today's run with automatic guidance based on the training plan -->
+            <button id="start-guided-today-btn" class="secondary">Start Today's Guided Run</button>
+            <!-- View the library of standalone guided runs -->
+            <button id="guided-run-btn" class="secondary">Guided Runs</button>
+            <div id="last-run-summary" class="summary"></div>
+            <div id="strava-status"></div>
+        </section>
+
+        <!-- Running session page -->
+        <section id="run-page" class="page">
+            <h2>Run Session</h2>
+            <div id="run-metrics" class="metrics">
+                <div><span class="label">Distance:</span> <span id="metric-distance">0.00</span> km</div>
+                <div><span class="label">Duration:</span> <span id="metric-duration">00:00</span></div>
+                <div><span class="label">Pace:</span> <span id="metric-pace">0:00</span> /km</div>
+            </div>
+            <div id="map" class="map"></div>
+            <button id="stop-run-btn" class="danger">Stop Run</button>
+        </section>
+
+        <!-- Plan page -->
+        <section id="plan-page" class="page">
+            <h2>Training Plan</h2>
+            <div id="plan-container"></div>
+        </section>
+
+        <!-- Records page -->
+        <section id="records-page" class="page">
+            <h2>Personal Bests</h2>
+            <div id="records-container"></div>
+        </section>
+
+        <!-- History page -->
+        <section id="history-page" class="page">
+            <h2>Run History</h2>
+            <div id="history-container"></div>
+        </section>
+
+        <!-- Quotes page -->
+        <section id="quotes-page" class="page">
+            <h2>Daily Motivation</h2>
+            <blockquote id="daily-quote"></blockquote>
+        </section>
+
+        <!-- Guided runs page -->
+        <section id="guided-page" class="page">
+            <h2>Guided Runs</h2>
+            <div id="guided-list"></div>
+        </section>
+    </main>
+
+    <nav id="nav-bar">
+        <button class="nav-btn" data-target="home-page">Home</button>
+        <button class="nav-btn" data-target="plan-page">Plan</button>
+        <button class="nav-btn" data-target="records-page">Records</button>
+        <button class="nav-btn" data-target="quotes-page">Quotes</button>
+        <button class="nav-btn" data-target="history-page">History</button>
+    </nav>
+
+    <script src="app.js"></script>
+</body>
+</html>
