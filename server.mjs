@@ -1,6 +1,7 @@
 import express from 'express';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const app = express();
 const projectId = process.env.VITE_FIREBASE_PROJECT_ID;
@@ -21,7 +22,7 @@ app.get('/api/glucose', async (req, res) => {
     const secret = process.env.NIGHTSCOUT_API_SECRET;
     if (!origin || !secret) return res.status(503).json({ error: 'Glucose integration not configured' });
     const upstream = await fetch(new URL('/api/v1/entries.json?count=288', origin), {
-      headers: { 'api-secret': secret, accept: 'application/json' },
+      headers: { 'api-secret': createHash('sha1').update(secret).digest('hex'), accept: 'application/json' },
       signal: AbortSignal.timeout(12000)
     });
     if (!upstream.ok) return res.status(502).json({ error: 'Nightscout unavailable (' + upstream.status + ')' });
