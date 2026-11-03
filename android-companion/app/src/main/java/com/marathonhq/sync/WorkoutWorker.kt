@@ -28,6 +28,17 @@ class WorkoutWorker(context:Context, params:WorkerParameters):CoroutineWorker(co
                 val client=HealthConnectClient.getOrCreate(context)
                 val permission=HealthPermission.getReadPermission(ExerciseSessionRecord::class)
                 if(permission !in client.permissionController.getGrantedPermissions())return@withContext false
+                // Check server-side requests; scheduled uploads still run even without a request.
+                try {
+                    val check=URL("https://marathon-hq-production.up.railway.app/api/workouts/sync-request").openConnection() as HttpURLConnection
+                    check.requestMethod="GET"
+                    check.setRequestProperty("Authorization","Bearer $token")
+                    check.connectTimeout=10000
+                    check.readTimeout=10000
+                    val checkCode=check.responseCode
+                    check.disconnect()
+                    if(checkCode==401)return@withContext false
+                }catch(e:Exception){android.util.Log.w("MarathonHQ","Sync request check unavailable; proceeding with scheduled upload",e)}
                 val workouts=JSONArray()
                 var page:String?=null
                 var total=0
