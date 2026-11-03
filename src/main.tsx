@@ -1,0 +1,36 @@
+import React,{useEffect,useMemo,useState} from 'react';
+import{createRoot}from'react-dom/client';
+import{onAuthStateChanged,User}from'firebase/auth';
+import{addDoc,collection,deleteDoc,doc,onSnapshot,serverTimestamp}from'firebase/firestore';
+import{Activity,Dumbbell,Utensils,HeartPulse,ChartNoAxesColumn,Plus,Trash2,LogIn,LogOut}from'lucide-react';
+import{auth,db,configured,login,logout}from'./firebase';
+import './style.css';
+type Kind='run'|'strength'|'nutrition'|'glucose'|'weight';
+type Entry={id:string;kind:Kind;date:string;amount:number;unit:string;note:string};
+const today=()=>new Date().toLocaleDateString('en-CA');
+const foundation=[5,6,7,5,8,9,7,10];
+const nav=[{id:'run',label:'Running',icon:Activity},{id:'strength',label:'Strength',icon:Dumbbell},{id:'nutrition',label:'Nutrition',icon:Utensils},{id:'glucose',label:'Glucose',icon:HeartPulse},{id:'weight',label:'Progress',icon:ChartNoAxesColumn}] as const;
+const unit:Record<Kind,string>={run:'km',strength:'minutes',nutrition:'kcal',glucose:'mmol/L',weight:'lb'};
+function App(){
+ const[user,setUser]=useState<User|null>(null),[entries,setEntries]=useState<Entry[]>([]),[tab,setTab]=useState<Kind>('run'),[date,setDate]=useState(today()),[amount,setAmount]=useState(''),[note,setNote]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false);
+ useEffect(()=>auth?onAuthStateChanged(auth,setUser):undefined,[]);
+ useEffect(()=>{if(!user||!db){setEntries([]);return;}return onSnapshot(collection(db,'users',user.uid,'entries'),s=>setEntries(s.docs.map(d=>({id:d.id,...d.data()} as Entry)).sort((a,b)=>b.date.localeCompare(a.date))),e=>setError(e.message));},[user]);
+ const weekly=useMemo(()=>entries.filter(e=>e.kind==='run'&&new Date(e.date+'T12:00:00')>=new Date(Date.now()-7*86400000)).reduce((s,e)=>s+e.amount,0),[entries]);
+ const total=entries.filter(e=>e.kind===tab).length;
+ async function save(e:React.FormEvent){e.preventDefault();if(!user||!db)return;const n=Number(amount);if(!Number.isFinite(n)||n<=0)return setError('Enter a positive number');setBusy(true);setError('');try{await addDoc(collection(db,'users',user.uid,'entries'),{kind:tab,date,amount:n,unit:unit[tab],note:note.slice(0,500),createdAt:serverTimestamp()});setAmount('');setNote('');}catch(e){setError(String(e));}finally{setBusy(false);}}
+ async function remove(id:string){if(!user||!db)return;try{await deleteDoc(doc(db,'users',user.uid,'entries',id));}catch(e){setError(String(e));}}
+ return <div className="shell"><header><div><small>SPRING 2027 · FIRST MARATHON</small><h1>Marathon <em>HQ</em></h1></div><span className="mark">42.2</span></header>
+ <section className="hero"><div><span className="eyebrow">YOUR TRAINING BASE</span><h2>One run at a time.</h2><p>Build endurance. Keep strength. Fuel well.</p></div><div className="stats"><div><strong>{weekly.toFixed(1)}</strong><span>KM · LAST 7 DAYS</span></div><div><strong>18</strong><span>NIKE PLAN WEEKS</span></div></div></section>
+ {!configured?<div className="notice">Firebase setup required. Add environment variables from .env.example to enable private Google sign-in and cloud logging.</div>:!user?<div className="notice"><p>Sign in to save private training and health logs.</p><button onClick={()=>login().catch(e=>setError(String(e)))}><LogIn size={17}/> Sign in with Google</button></div>:<div className="account"><span>Signed in: {user.email}</span><button className="quiet" onClick={logout}><LogOut size={15}/> Sign out</button></div>}
+ <nav aria-label="Tracking sections">{nav.map(n=><button key={n.id} className={tab===n.id?'active':''} onClick={()=>{setTab(n.id);setError('')}}><n.icon size={19}/><span>{n.label}</span></button>)}</nav>
+ <main><div className="section-title"><div><small>YOUR JOURNAL</small><h2>{nav.find(n=>n.id===tab)?.label}</h2></div><span className="counter">{total} logs</span></div>
+ {tab==='run'&&<section className="panel"><h3>Foundation · 8 weeks</h3><p>Before Nike's 18-week marathon plan, gradually extend comfortable long runs. Repeat weeks as needed.</p><div className="weeks">{foundation.map((v,i)=><div key={i}><small>W{i+1}</small><strong>{v} km</strong></div>)}</div><p className="muted">Nike Run Club controls actual marathon workouts. Record completed runs here; no automatic Nike sync.</p></section>}
+ {tab==='strength'&&<section className="panel"><h3>Two dumbbell days</h3><p><b>Upper:</b> Floor press 3×10 · Row 3×10 · Shoulder press 2×10 · Curls 2×12 · Plank 3×30s</p><p><b>Lower:</b> Goblet squat 3×8 · RDL 3×10 · Reverse lunge 2×8/leg · Calf raise 3×15 · Side plank</p><p className="muted">Keep 2–3 reps in reserve. Reduce volume during peak long-run weeks.</p></section>}
+ {tab==='nutrition'&&<section className="panel"><h3>Fuel the training</h3><p>Initial protein target: 145–160 g/day. Fuel longer runs with carbohydrates. Avoid aggressive calorie deficits as mileage rises.</p><p className="muted">Log daily calories below; use notes for protein and carbs. Nutrition estimates are not medical prescriptions.</p></section>}
+ {tab==='glucose'&&<section className="panel"><h3>Type 1 safety</h3><p>Record glucose and trends around exercise. Carry fast carbs; check ketones with unexplained high glucose; monitor delayed lows.</p><p className="muted">No automated insulin advice. Review exercise adjustments with your diabetes team.</p></section>}
+ {tab==='weight'&&<section className="panel"><h3>Body composition</h3><p>Track weight trends, not daily fluctuations. Keep fat loss modest during foundation and prioritize fueling during marathon build.</p></section>}
+ <section className="panel"><h3><Plus size={17}/> New {tab} log</h3><form onSubmit={save}><label>Date<input type="date" value={date} onChange={e=>setDate(e.target.value)} required/></label><label>{tab==='run'?'Distance':tab==='nutrition'?'Calories':tab==='glucose'?'Glucose':tab==='weight'?'Weight':'Duration'} ({unit[tab]})<input type="number" inputMode="decimal" min="0.1" step="any" value={amount} onChange={e=>setAmount(e.target.value)} required placeholder={'Enter '+unit[tab]}/></label><label>Notes<textarea rows={3} maxLength={500} value={note} onChange={e=>setNote(e.target.value)} placeholder="Pace, workout, food, CGM trend, recovery…"/></label><button className="primary" disabled={!user||busy}>{busy?'Saving…':'Save log'}</button></form></section>
+ {error&&<p className="error" role="alert">{error}</p>}
+ <section className="panel"><h3>Recent logs</h3>{entries.filter(e=>e.kind===tab).slice(0,15).map(e=><div className="entry" key={e.id}><div><small>{e.date}</small><strong>{e.amount} {e.unit}</strong>{e.note&&<p>{e.note}</p>}</div><button className="quiet" aria-label="Delete log" onClick={()=>remove(e.id)}><Trash2 size={17}/></button></div>)}{!entries.some(e=>e.kind===tab)&&<p className="muted">No logs yet. Your first entry starts here.</p>}</section></main><footer>MARATHON HQ · TRAIN SMART · FINISH STRONG</footer></div>;
+}
+createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
