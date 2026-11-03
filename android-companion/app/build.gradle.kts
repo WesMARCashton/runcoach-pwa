@@ -4,7 +4,7 @@ plugins {
 }
 android {
     namespace = "com.marathonhq.sync"
-    compileSdk = 35
+    compileSdk = 36
     defaultConfig {
         applicationId = "com.marathonhq.sync"
         minSdk = 28
