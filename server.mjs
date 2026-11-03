@@ -103,21 +103,23 @@ app.get('/api/workouts/:id/glucose',requireFirebase,async(req,res)=>{
     const doc=await adminDb().collection('users').doc(req.uid).collection('workouts').doc(req.params.id).get();
     if(!doc.exists)return res.status(404).json({error:'Workout not found'});
     const w=doc.data(),from=w.start-30*60000,to=w.end+3*3600000;
+    if(!Number.isFinite(w.start)||!Number.isFinite(w.end)||w.end<w.start)return res.status(422).json({error:'Invalid workout times'});
     const url=new URL('/api/v1/entries.json',process.env.NIGHTSCOUT_URL);
     url.searchParams.set('find[date][$gte]',String(from));
     url.searchParams.set('find[date][$lte]',String(to));
-    url.searchParams.set('count','500');
-    const response=await fetch(url,{headers:{'api-secret':createHash('sha1').update(process.env.NIGHTSCOUT_API_SECRET).digest('hex')}});
+    url.searchParams.set('count','1000');
+    const response=await fetch(url,{headers:{'api-secret':createHash('sha1').update(process.env.NIGHTSCOUT_API_SECRET).digest('hex'),accept:'application/json'},signal:AbortSignal.timeout(15000)});
     if(!response.ok)return res.status(502).json({error:'Nightscout unavailable ('+response.status+')'});
     const raw=await response.json();
-    const readings=(Array.isArray(raw)?raw:[]).filter(e=>Number(e.date)>=from&&Number(e.date)<=to)
-      .map(e=>({time:Number(e.date),mmol:Math.round(Number(e.sgv)/18.0182*10)/10}))
-      .filter(e=>Number.isFinite(e.mmol)).sort((a,b)=>a.time-b.time);
-    const before=readings.filter(e=>e.time<=w.start).at(-1)||null;
-    const during=readings.filter(e=>e.time>=w.start&&e.time<=w.end);
-    const finish=during.at(-1)||null;
-    const after=readings.filter(e=>e.time>w.end).at(-1)||null;
-    res.set('Cache-Control','no-store').json({readings,before,finish,after,start:w.start,end:w.end});
+    const readings=(Array.isArray(raw)?raw:[]).map(e=>({time:Number(e.date),mmol:Math.round(Number(e.sgv)/18.0182*10)/10}))
+      .filter(e=>Number.isFinite(e.time)&&Number.isFinite(e.mmol)&&e.time>=from&&e.time<=to&&e.mmol>0)
+      .sort((a,b)=>a.time-b.time);
+    const closest=(items,target)=>items.reduce((best,e)=>!best||Math.abs(e.time-target)<Math.abs(best.time-target)?e:best,null);
+    const before=closest(readings.filter(e=>e.time<=w.start&&e.time>=w.start-30*60000),w.start);
+    const finish=closest(readings.filter(e=>Math.abs(e.time-w.end)<=15*60000),w.end);
+    const after=closest(readings.filter(e=>e.time>=w.end&&e.time<=w.end+3*3600000),w.end+3*3600000);
+    const status=readings.length===0?'no_data':(!before||!finish?'partial':'complete');
+    res.set('Cache-Control','no-store').json({readings,before,finish,after,status,start:w.start,end:w.end});
   }catch(e){console.error('Workout glucose',e.message);res.status(503).json({error:'Glucose analysis unavailable'});}
 });
 
