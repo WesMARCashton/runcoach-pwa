@@ -58,7 +58,7 @@ class MainActivity : ComponentActivity() {
                 }
                 status.text = "Found ${entries.size} workouts in past 30 days:\n" +
                     entries.sortedByDescending { it.startTime }.take(20).joinToString("\n") {
-                        "${it.startTime} · ${it.exerciseType} · ${ChronoUnit.MINUTES.between(it.startTime, it.endTime)} min"
+                        "${it.startTime.atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("MMM d, h:mm a"))} · ${when(it.exerciseType) { ExerciseSessionRecord.EXERCISE_TYPE_RUNNING -> "Running"; ExerciseSessionRecord.EXERCISE_TYPE_WALKING -> "Walking"; else -> "Workout" }} · ${ChronoUnit.MINUTES.between(it.startTime, it.endTime)} min"
                     } + "\n\nSync to Marathon HQ will be enabled after secure account pairing."
             } catch (e: Exception) {
                 status.text = "Unable to read workouts: ${e.message}"
