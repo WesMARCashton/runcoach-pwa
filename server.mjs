@@ -1,12 +1,90 @@
 import express from 'express';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { initializeApp, cert, getApps } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
 const app = express();
 const projectId = process.env.VITE_FIREBASE_PROJECT_ID;
 const jwks = createRemoteJWKSet(new URL('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'));
 app.disable('x-powered-by');
+
+const adminDb = () => {
+  const credentials = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (!credentials) throw Error('Server Firebase credentials not configured');
+  if (!getApps().length) initializeApp({ credential: cert(JSON.parse(credentials)) });
+  return getFirestore();
+};
+const hashToken = token => createHash('sha256').update(token).digest('hex');
+async function requireFirebase(req, res, next) {
+  try {
+    const token = (req.headers.authorization || '').replace(/^Bearer /, '');
+    const { payload } = await jwtVerify(token, jwks, {
+      issuer: 'https://securetoken.google.com/' + projectId, audience: projectId, algorithms: ['RS256']
+    });
+    if (!payload.sub) throw Error('No user');
+    req.uid = payload.sub;
+    next();
+  } catch { res.status(401).json({error:'Sign in required'}); }
+}
+app.use(express.json({limit:'150kb'}));
+app.post('/api/pair/start', requireFirebase, async (req,res) => {
+  try {
+    const code = String(Math.floor(100000 + Math.random()*900000));
+    const key = randomBytes(18).toString('hex');
+    await adminDb().collection('pairing').doc(key).set({
+      uid:req.uid, codeHash:hashToken(code), expires:Date.now()+600000, used:false
+    });
+    res.set('Cache-Control','no-store').json({code, pairId:key, expiresIn:600});
+  } catch(e) { console.error('Pair start',e.message); res.status(503).json({error:'Pairing not configured'}); }
+});
+app.post('/api/pair/claim', async(req,res) => {
+  try {
+    const {pairId,code} = req.body || {};
+    if(!/^[a-f0-9]{36}$/.test(String(pairId)) || !/^\\d{6}$/.test(String(code))) return res.status(400).json({error:'Invalid pairing details'});
+    const ref=adminDb().collection('pairing').doc(pairId);
+    const token=randomBytes(32).toString('hex');
+    const ok=await adminDb().runTransaction(async tx=>{
+      const snap=await tx.get(ref); const v=snap.data();
+      if(!v || v.used || v.expires<Date.now() || v.codeHash!==hashToken(code)) return false;
+      tx.update(ref,{used:true});
+      tx.set(adminDb().collection('devices').doc(hashToken(token)),{uid:v.uid,createdAt:FieldValue.serverTimestamp(),lastSync:null});
+      return true;
+    });
+    if(!ok) return res.status(403).json({error:'Code expired or incorrect'});
+    res.set('Cache-Control','no-store').json({deviceToken:token});
+  } catch(e){console.error('Pair claim',e.message);res.status(503).json({error:'Pairing unavailable'});}
+});
+app.post('/api/workouts/sync', async(req,res)=>{
+  try {
+    const token=(req.headers.authorization||'').replace(/^Bearer /,'');
+    if(!/^[a-f0-9]{64}$/.test(token)) return res.status(401).json({error:'Device not paired'});
+    const db=adminDb(), device=await db.collection('devices').doc(hashToken(token)).get();
+    if(!device.exists) return res.status(401).json({error:'Device not paired'});
+    const workouts=req.body?.workouts;
+    if(!Array.isArray(workouts)||workouts.length>100) return res.status(400).json({error:'Invalid workouts'});
+    const batch=db.batch();
+    for(const w of workouts){
+      if(!/^[a-zA-Z0-9._:-]{1,160}$/.test(String(w.id)) || !['running','walking','other'].includes(w.type)) continue;
+      const start=Number(w.start),end=Number(w.end);
+      if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||end-start>86400000) continue;
+      batch.set(db.collection('users').doc(device.data().uid).collection('workouts').doc(hashToken(w.id)),{
+        type:w.type,start,end,source:'health-connect',durationMinutes:Math.round((end-start)/60000),updatedAt:FieldValue.serverTimestamp()
+      },{merge:true});
+    }
+    batch.update(device.ref,{lastSync:FieldValue.serverTimestamp()});
+    await batch.commit();
+    res.json({ok:true});
+  }catch(e){console.error('Workout sync',e.message);res.status(503).json({error:'Sync unavailable'});}
+});
+app.get('/api/workouts',requireFirebase,async(req,res)=>{
+  try {
+    const snap=await adminDb().collection('users').doc(req.uid).collection('workouts').orderBy('start','desc').limit(100).get();
+    res.json({workouts:snap.docs.map(d=>({id:d.id,...d.data(),updatedAt:undefined}))});
+  }catch(e){console.error('Workouts',e.message);res.status(503).json({error:'Workouts unavailable'});}
+});
+
 app.get('/api/glucose', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   const bearer = req.headers.authorization || '';
