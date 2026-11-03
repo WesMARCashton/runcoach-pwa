@@ -85,6 +85,31 @@ app.get('/api/workouts',requireFirebase,async(req,res)=>{
   }catch(e){console.error('Workouts',e.message);res.status(503).json({error:'Workouts unavailable'});}
 });
 
+
+app.get('/api/workouts/:id/glucose',requireFirebase,async(req,res)=>{
+  try {
+    if(!/^[a-f0-9]{64}$/.test(req.params.id))return res.status(400).json({error:'Invalid workout'});
+    const doc=await adminDb().collection('users').doc(req.uid).collection('workouts').doc(req.params.id).get();
+    if(!doc.exists)return res.status(404).json({error:'Workout not found'});
+    const w=doc.data(),from=w.start-30*60000,to=w.end+3*3600000;
+    const url=new URL('/api/v1/entries.json',process.env.NIGHTSCOUT_URL);
+    url.searchParams.set('find[date][$gte]',String(from));
+    url.searchParams.set('find[date][$lte]',String(to));
+    url.searchParams.set('count','500');
+    const response=await fetch(url,{headers:{'api-secret':createHash('sha1').update(process.env.NIGHTSCOUT_API_SECRET).digest('hex')}});
+    if(!response.ok)return res.status(502).json({error:'Nightscout unavailable ('+response.status+')'});
+    const raw=await response.json();
+    const readings=(Array.isArray(raw)?raw:[]).filter(e=>Number(e.date)>=from&&Number(e.date)<=to)
+      .map(e=>({time:Number(e.date),mmol:Math.round(Number(e.sgv)/18.0182*10)/10}))
+      .filter(e=>Number.isFinite(e.mmol)).sort((a,b)=>a.time-b.time);
+    const before=readings.filter(e=>e.time<=w.start).at(-1)||null;
+    const during=readings.filter(e=>e.time>=w.start&&e.time<=w.end);
+    const finish=during.at(-1)||null;
+    const after=readings.filter(e=>e.time>w.end).at(-1)||null;
+    res.set('Cache-Control','no-store').json({readings,before,finish,after,start:w.start,end:w.end});
+  }catch(e){console.error('Workout glucose',e.message);res.status(503).json({error:'Glucose analysis unavailable'});}
+});
+
 app.get('/api/glucose', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   const bearer = req.headers.authorization || '';
