@@ -13,7 +13,18 @@ app.disable('x-powered-by');
 const adminDb = () => {
   const credentials = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   if (!credentials) throw Error('Server Firebase credentials not configured');
-  if (!getApps().length) initializeApp({ credential: cert(JSON.parse(credentials)) });
+  let serviceAccount;
+  try {
+    serviceAccount = JSON.parse(credentials.trim());
+    if (typeof serviceAccount === 'string') serviceAccount = JSON.parse(serviceAccount);
+    if (!serviceAccount || serviceAccount.type !== 'service_account' ||
+        !serviceAccount.project_id || !serviceAccount.client_email || !serviceAccount.private_key) {
+      throw new Error('Required service account fields missing');
+    }
+  } catch {
+    throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON is not a valid Firebase service-account JSON object');
+  }
+  if (!getApps().length) initializeApp({ credential: cert(serviceAccount) });
   return getFirestore();
 };
 const hashToken = token => createHash('sha256').update(token).digest('hex');
