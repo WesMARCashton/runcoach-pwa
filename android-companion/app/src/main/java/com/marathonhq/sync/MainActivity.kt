@@ -5,6 +5,12 @@ import android.os.Bundle
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.EditText
+import androidx.work.*
+import java.util.concurrent.TimeUnit
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.health.connect.client.HealthConnectClient
@@ -23,6 +29,8 @@ import java.time.temporal.ChronoUnit
 class MainActivity : ComponentActivity() {
     private val permission = HealthPermission.getReadPermission(ExerciseSessionRecord::class)
     private lateinit var status: TextView
+    private lateinit var pairId: EditText
+    private lateinit var code: EditText
     private val permissionLauncher = registerForActivityResult(
         PermissionController.createRequestPermissionResultContract()
     ) { granted -> if (permission in granted) readWorkouts() else status.text = "Exercise permission required" }
@@ -32,11 +40,46 @@ class MainActivity : ComponentActivity() {
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(36, 56, 36, 36) }
         status = TextView(this).apply { text = "Marathon HQ Companion\nRead-only Health Connect workout preview"; textSize = 18f }
         layout.addView(status)
+        pairId = EditText(this).apply { hint = "Pair ID from Marathon HQ"; setSingleLine(true) }
+        code = EditText(this).apply { hint = "Six-digit pairing code"; inputType = 2; setSingleLine(true) }
+        layout.addView(pairId)
+        layout.addView(code)
+        layout.addView(Button(this).apply { text = "Pair with Marathon HQ"; setOnClickListener { pairDevice() } })
+        layout.addView(Button(this).apply { text = "Sync workouts now"; setOnClickListener { syncNow() } })
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork("health-sync", ExistingPeriodicWorkPolicy.KEEP,
+            PeriodicWorkRequestBuilder<WorkoutWorker>(15, TimeUnit.MINUTES).build())
         layout.addView(Button(this).apply { text = "Grant Health Connect permission"; setOnClickListener { permissionLauncher.launch(setOf(permission)) } })
         layout.addView(Button(this).apply { text = "Read recent workouts"; setOnClickListener { readWorkouts() } })
         setContentView(layout)
     }
 
+    private fun pairDevice() {
+        val id=pairId.text.toString().trim()
+        val pin=code.text.toString().trim()
+        status.text = "Pairing…"
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                val response=withContext(Dispatchers.IO) {
+                    val conn=URL("https://marathon-hq-production.up.railway.app/api/pair/claim").openConnection() as HttpURLConnection
+                    conn.requestMethod="POST"; conn.doOutput=true; conn.setRequestProperty("Content-Type","application/json")
+                    conn.connectTimeout=12000; conn.readTimeout=12000
+                    conn.outputStream.use { it.write(JSONObject().put("pairId",id).put("code",pin).toString().toByteArray()) }
+                    val text=(if(conn.responseCode in 200..299)conn.inputStream else conn.errorStream).bufferedReader().readText()
+                    if(conn.responseCode !in 200..299)throw Exception(text)
+                    JSONObject(text).getString("deviceToken")
+                }
+                getSharedPreferences("sync",MODE_PRIVATE).edit().putString("deviceToken",response).apply()
+                status.text="Paired. Tap Sync workouts now."
+            } catch(e:Exception){status.text="Pairing failed: ${e.message}"}
+        }
+    }
+    private fun syncNow() {
+        status.text="Syncing…"
+        CoroutineScope(Dispatchers.Main).launch {
+            val result=withContext(Dispatchers.IO){WorkoutWorker.upload(applicationContext)}
+            status.text=if(result) "Sync complete. Check Marathon HQ Running tab." else "Sync failed. Check pairing and Health Connect permissions."
+        }
+    }
     private fun readWorkouts() {
         if (HealthConnectClient.getSdkStatus(this) != HealthConnectClient.SDK_AVAILABLE) {
             status.text = "Health Connect unavailable on this device"
