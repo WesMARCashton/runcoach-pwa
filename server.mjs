@@ -67,6 +67,28 @@ app.post('/api/pair/claim', async(req,res) => {
     res.set('Cache-Control','no-store').json({deviceToken:token});
   } catch(e){console.error('Pair claim',e.message);res.status(503).json({error:'Pairing unavailable'});}
 });
+app.post('/api/workouts/request-sync',requireFirebase,async(req,res)=>{
+  try{
+    const db=adminDb();
+    const devices=await db.collection('devices').where('uid','==',req.uid).limit(10).get();
+    if(devices.empty)return res.status(404).json({error:'No paired Android device'});
+    const requestedAt=Date.now();
+    const batch=db.batch();
+    devices.docs.forEach(d=>batch.update(d.ref,{syncRequestedAt:requestedAt}));
+    await batch.commit();
+    res.set('Cache-Control','no-store').json({ok:true,requestedAt,devices:devices.size});
+  }catch(e){console.error('Request workout sync',e.message);res.status(503).json({error:'Unable to request sync'});}
+});
+app.get('/api/workouts/sync-request',async(req,res)=>{
+  try{
+    const token=(req.headers.authorization||'').replace(/^Bearer /,'');
+    if(!/^[a-f0-9]{64}$/.test(token))return res.status(401).json({error:'Device not paired'});
+    const snap=await adminDb().collection('devices').doc(hashToken(token)).get();
+    if(!snap.exists)return res.status(401).json({error:'Device not paired'});
+    const d=snap.data(),requestedAt=Number(d.syncRequestedAt||0),completedAt=Number(d.syncCompletedAt||0);
+    res.set('Cache-Control','no-store').json({syncNeeded:requestedAt>completedAt,requestedAt});
+  }catch(e){console.error('Check workout sync',e.message);res.status(503).json({error:'Sync check unavailable'});}
+});
 app.post('/api/workouts/sync', async(req,res)=>{
   try {
     const token=(req.headers.authorization||'').replace(/^Bearer /,'');
@@ -84,7 +106,7 @@ app.post('/api/workouts/sync', async(req,res)=>{
         type:w.type,start,end,source:'health-connect',durationMinutes:Math.round((end-start)/60000),updatedAt:FieldValue.serverTimestamp()
       },{merge:true});
     }
-    batch.update(device.ref,{lastSync:FieldValue.serverTimestamp()});
+    batch.update(device.ref,{lastSync:FieldValue.serverTimestamp(),syncCompletedAt:Date.now()});
     await batch.commit();
     res.json({ok:true});
   }catch(e){console.error('Workout sync',e.message);res.status(503).json({error:'Sync unavailable'});}
