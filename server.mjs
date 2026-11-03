@@ -53,7 +53,7 @@ app.post('/api/pair/start', requireFirebase, async (req,res) => {
 app.post('/api/pair/claim', async(req,res) => {
   try {
     const {pairId,code} = req.body || {};
-    if(!/^[a-f0-9]{32}$/.test(String(pairId)) || !/^\d{6}$/.test(String(code))) return res.status(400).json({error:'Invalid pairing details'});
+    if(!/^[a-f0-9]{36}$/.test(String(pairId)) || !/^\d{6}$/.test(String(code))) return res.status(400).json({error:'Invalid pairing details'});
     const ref=adminDb().collection('pairing').doc(pairId);
     const token=randomBytes(32).toString('hex');
     const ok=await adminDb().runTransaction(async tx=>{
