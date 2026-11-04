@@ -145,6 +145,38 @@ app.get('/api/workouts/:id/glucose',requireFirebase,async(req,res)=>{
   }catch(e){console.error('Workout glucose',e.message);res.status(503).json({error:'Glucose analysis unavailable'});}
 });
 
+app.get('/api/glucose/history',requireFirebase,async(req,res)=>{
+  res.set('Cache-Control','no-store');
+  try{
+    const days=Number(req.query.days);
+    if(![7,14,30,90].includes(days))return res.status(400).json({error:'Choose 7, 14, 30 or 90 days'});
+    const origin=process.env.NIGHTSCOUT_URL,secret=process.env.NIGHTSCOUT_API_SECRET;
+    if(!origin||!secret)return res.status(503).json({error:'Glucose integration not configured'});
+    const end=Date.now(),start=end-days*86400000;
+    const headers={'api-secret':createHash('sha1').update(secret).digest('hex'),accept:'application/json'};
+    const chunks=[];
+    for(let from=start;from<end;from+=86400000)chunks.push([from,Math.min(end,from+86400000)]);
+    const all=[];
+    for(let i=0;i<chunks.length;i+=4){
+      const results=await Promise.all(chunks.slice(i,i+4).map(async([from,to])=>{
+        const url=new URL('/api/v1/entries.json',origin);
+        url.searchParams.set('find[date][$gte]',String(from));
+        url.searchParams.set('find[date][$lt]',String(to));
+        url.searchParams.set('count','1500');
+        const response=await fetch(url,{headers,signal:AbortSignal.timeout(15000)});
+        if(!response.ok)throw Error('Nightscout HTTP '+response.status);
+        const raw=await response.json();
+        if(!Array.isArray(raw))throw Error('Invalid Nightscout response');
+        return raw.filter(e=>Number(e.date)>=from&&Number(e.date)<to).map(e=>({
+          time:Number(e.date),mmol:Math.round(Number(e.sgv)/18.0182*10)/10
+        })).filter(e=>Number.isFinite(e.time)&&Number.isFinite(e.mmol)&&e.mmol>0);
+      }));
+      results.forEach(group=>all.push(...group));
+    }
+    const unique=[...new Map(all.map(e=>[e.time,e])).values()].sort((a,b)=>a.time-b.time);
+    res.json({days,start,end,readings:unique});
+  }catch(e){console.error('Glucose history',e.message);res.status(502).json({error:'Historical glucose temporarily unavailable'});}
+});
 app.get('/api/glucose', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   const bearer = req.headers.authorization || '';
